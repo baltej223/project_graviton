@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useState } from 'react';
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 
 type AnalysisStrategy = 'bilateral' | 'midline' | 'normative';
 type BodyRegion = 'limb' | 'handFoot' | 'spine' | 'localized';
@@ -29,6 +29,8 @@ type ProcessingState = {
 type MockAnalysisResult = {
   strategyLabel: string;
   regionLabel: string;
+  configuration: Configuration;
+  sourceFiles: { rgb: string; thermal: string };
   metrics: {
     maxTemperature: string;
     maxDeltaT: string;
@@ -110,6 +112,11 @@ const getConfigSummary = (config: Configuration) => {
 const buildMockResult = (config: Configuration, upload: UploadState): MockAnalysisResult => ({
   strategyLabel: getStrategyLabel(config.strategy),
   regionLabel: getRegionLabel(config.bodyRegion),
+  configuration: { ...config },
+  sourceFiles: {
+    rgb: upload.rgb?.name ?? '',
+    thermal: upload.thermal?.name ?? '',
+  },
   metrics: {
     maxTemperature: '37.8 °C',
     maxDeltaT: '+1.6 °C',
@@ -147,9 +154,22 @@ function App() {
   const [analysisResult, setAnalysisResult] = useState<MockAnalysisResult | null>(null);
   const [selectedLayer, setSelectedLayer] = useState<VisualizationLayer>('registration');
   const [validationMessage, setValidationMessage] = useState('');
+  const processingTimeouts = useRef<number[]>([]);
+
+  const clearProcessingTimeouts = () => {
+    processingTimeouts.current.forEach(window.clearTimeout);
+    processingTimeouts.current = [];
+  };
+
+  const invalidateAnalysis = () => {
+    clearProcessingTimeouts();
+    setAnalysisResult(null);
+    setProcessingState({ status: 'idle', message: 'Awaiting valid inputs' });
+  };
 
   useEffect(() => {
     return () => {
+      clearProcessingTimeouts();
       if (upload.rgbPreview) {
         URL.revokeObjectURL(upload.rgbPreview);
       }
@@ -167,6 +187,7 @@ function App() {
   const handleRgbInput = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
 
+    invalidateAnalysis();
     if (upload.rgbPreview) {
       URL.revokeObjectURL(upload.rgbPreview);
     }
@@ -206,6 +227,7 @@ function App() {
   const handleThermalInput = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
 
+    invalidateAnalysis();
     if (upload.thermalPreview) {
       URL.revokeObjectURL(upload.thermalPreview);
     }
@@ -243,6 +265,8 @@ function App() {
   };
 
   const updateConfiguration = <K extends keyof Configuration>(key: K, value: Configuration[K]) => {
+    invalidateAnalysis();
+    setValidationMessage('');
     setConfig((previous) => ({
       ...previous,
       [key]: value,
@@ -250,6 +274,10 @@ function App() {
   };
 
   const handleAnalyze = () => {
+    if (processingState.status === 'processing') {
+      return;
+    }
+
     if (!upload.rgb || !upload.thermal) {
       setValidationMessage('Both RGB and thermal files are required before analysis can run.');
       return;
@@ -280,22 +308,29 @@ function App() {
     }
 
     setValidationMessage('');
+    clearProcessingTimeouts();
     setProcessingState({ status: 'processing', message: 'Upload validated' });
 
-    window.setTimeout(() => {
+    processingTimeouts.current.push(window.setTimeout(() => {
       setProcessingState({ status: 'processing', message: 'Registration preview prepared' });
-    }, 700);
+    }, 700));
 
-    window.setTimeout(() => {
+    processingTimeouts.current.push(window.setTimeout(() => {
       setProcessingState({ status: 'complete', message: 'Mock analysis complete' });
       setAnalysisResult(buildMockResult(config, upload));
-    }, 1600);
+      processingTimeouts.current = [];
+    }, 1600));
   };
 
   return (
     <main className="min-h-screen text-slate-100">
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         <Header />
+        <WorkflowSteps
+          hasRgb={Boolean(upload.rgb && !upload.rgbError)}
+          hasThermal={Boolean(upload.thermal && !upload.thermalError)}
+          analysisComplete={processingState.status === 'complete'}
+        />
 
         <section className="mt-8 grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
           <div className="space-y-6">
@@ -324,16 +359,19 @@ function App() {
             <AnalysisConfiguration config={config} onChange={updateConfiguration} />
 
             <AnalyzeButton
-              disabled={!canAnalyze}
+              disabled={!canAnalyze || processingState.status === 'processing'}
               validationMessage={validationMessage}
               processingState={processingState}
               onClick={handleAnalyze}
             />
           </div>
 
-          <aside className="rounded-3xl border border-slate-700/80 bg-slate-900/80 p-5 shadow-2xl shadow-slate-950/40 backdrop-blur-sm">
+          <aside className="rounded-3xl border border-slate-700/80 bg-slate-900/80 p-5 shadow-2xl shadow-slate-950/40 backdrop-blur-sm xl:sticky xl:top-6 xl:self-start">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold text-sky-200">Prototype summary</h2>
+              <div>
+                <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Session setup</p>
+                <h2 className="mt-1 text-lg font-semibold text-sky-200">Prototype summary</h2>
+              </div>
               <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.2em] text-emerald-300">
                 Demo
               </span>
@@ -344,6 +382,11 @@ function App() {
               <SummaryLine label="Region" value={getRegionLabel(config.bodyRegion)} />
               <SummaryLine label="Threshold" value={getConfigSummary(config)} />
               <SummaryLine label="Status" value={processingState.message} />
+            </div>
+
+            <div className="mt-5 space-y-3 rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
+              <FileStatus label="RGB image" file={upload.rgb} valid={Boolean(upload.rgb && !upload.rgbError)} />
+              <FileStatus label="Thermal data" file={upload.thermal} valid={Boolean(upload.thermal && !upload.thermalError)} />
             </div>
 
             <div className="mt-6 rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
@@ -357,18 +400,21 @@ function App() {
         </section>
 
         {analysisResult ? (
-          <section className="mt-10 rounded-3xl border border-slate-700 bg-slate-900/75 p-5 shadow-2xl shadow-slate-950/30">
+          <section className="mt-10 min-w-0 overflow-hidden rounded-3xl border border-slate-700 bg-slate-900/75 p-5 shadow-2xl shadow-slate-950/30">
             <div className="flex flex-col gap-2 border-b border-slate-700 pb-5 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.25em] text-cyan-300">Analysis dashboard</p>
                 <h2 className="mt-2 text-2xl font-semibold text-white">Mock result overview</h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  {analysisResult.regionLabel} · {analysisResult.strategyLabel}
+                </p>
               </div>
               <div className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200">
                 Prototype output
               </div>
             </div>
 
-            <div className="mt-6 grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+            <div className="mt-6 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(16rem,1fr)]">
               <AnalysisViewer
                 selectedLayer={selectedLayer}
                 onLayerSelect={setSelectedLayer}
@@ -376,21 +422,30 @@ function App() {
                 thermalPreview={upload.thermalPreview}
               />
 
-              <div className="space-y-4">
-                <MetricCard label="Maximum temperature" value="37.8 °C" />
-                <MetricCard label="Maximum ΔT" value="+1.6 °C" />
-                <MetricCard label="Epicenter" value="x 62%, y 44%" />
-                <MetricCard label="Thermal gradient" value="0.42 °C/cm" />
-                <MetricCard label="Estimated pattern" value="Deep / diffuse" />
-                <MetricCard label="Analysis strategy" value={analysisResult.strategyLabel} />
+              <div className="min-w-0">
+                <div className="mb-3 flex items-center justify-between">
+                  <h3 className="text-sm font-semibold text-slate-200">Key indicators</h3>
+                  <span className="text-xs text-slate-400">Demo values</span>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                  <MetricCard label="Maximum temperature" value={analysisResult.metrics.maxTemperature} />
+                  <MetricCard label="Maximum ΔT" value={analysisResult.metrics.maxDeltaT} />
+                  <MetricCard label="Epicenter" value={analysisResult.metrics.epicenter} />
+                  <MetricCard label="Thermal gradient" value={analysisResult.metrics.gradient} />
+                  <MetricCard label="Estimated pattern" value={analysisResult.metrics.pattern} />
+                  <MetricCard label="Analysis strategy" value={analysisResult.metrics.strategy} />
+                </div>
               </div>
             </div>
 
             <div className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-              <ExplanationPanel config={config} strategyLabel={analysisResult.strategyLabel} />
+              <ExplanationPanel config={analysisResult.configuration} strategyLabel={analysisResult.strategyLabel} />
 
               <div className="rounded-2xl border border-slate-700 bg-slate-950/60 p-4">
                 <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Method summary</p>
+                <p className="mt-2 text-xs text-slate-400">
+                  Inputs: {analysisResult.sourceFiles.rgb} + {analysisResult.sourceFiles.thermal}
+                </p>
                 <ul className="mt-4 space-y-3 text-sm text-slate-300">
                   {analysisResult.methodology.map((item) => (
                     <li key={item} className="flex gap-3">
@@ -412,22 +467,103 @@ function App() {
 
 function Header() {
   return (
-    <header className="rounded-3xl border border-cyan-500/20 bg-slate-900/80 p-6 shadow-xl shadow-slate-950/30 backdrop-blur-sm">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-cyan-300">Bioheat decision support</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white sm:text-4xl">Multimodal Bioheat Tracker</h1>
+    <header className="relative overflow-hidden rounded-3xl border border-cyan-500/20 bg-slate-900/80 p-6 shadow-xl shadow-slate-950/30 backdrop-blur-sm sm:p-8">
+      <div className="absolute -right-20 -top-32 h-72 w-72 rounded-full bg-cyan-400/10 blur-3xl" />
+      <div className="relative flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="max-w-3xl">
+          <div className="flex items-center gap-2 text-xs font-medium uppercase tracking-[0.3em] text-cyan-300">
+            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_14px_rgba(52,211,153,0.8)]" />
+            Bioheat decision support
+          </div>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white sm:text-4xl">
+            Multimodal Bioheat Tracker
+          </h1>
+          <p className="mt-3 max-w-2xl text-base leading-7 text-slate-300">
+            Explainable thermal triage and monitoring assistance.
+            <span className="mt-1 block text-sm text-slate-400">
+              Pair an optical reference with thermal data to review a transparent, anatomy-aware prototype analysis.
+            </span>
+          </p>
         </div>
 
-        <span className="inline-flex items-center rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1.5 text-sm font-medium text-sky-200">
-          Prototype / Phase 1
-        </span>
+        <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
+          <span className="inline-flex items-center rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1.5 text-sm font-medium text-sky-200">
+            Prototype / Phase 1
+          </span>
+          <span className="text-xs text-slate-400">Local-only demo · No patient data is uploaded</span>
+        </div>
       </div>
-
-      <p className="mt-4 max-w-3xl text-base text-slate-300">
-        Explainable thermal triage and monitoring assistance.
-      </p>
     </header>
+  );
+}
+
+function WorkflowSteps({
+  hasRgb,
+  hasThermal,
+  analysisComplete,
+}: {
+  hasRgb: boolean;
+  hasThermal: boolean;
+  analysisComplete: boolean;
+}) {
+  const uploadsComplete = hasRgb && hasThermal;
+  const steps = [
+    { number: '01', label: 'Add source images', detail: 'RGB + thermal', complete: uploadsComplete },
+    { number: '02', label: 'Set comparison', detail: 'Anatomy + threshold', complete: false },
+    { number: '03', label: 'Review output', detail: 'Explainable mock result', complete: analysisComplete },
+  ];
+
+  return (
+    <nav aria-label="Analysis workflow" className="mt-5 grid gap-2 sm:grid-cols-3">
+      {steps.map((step, index) => {
+        const active = index === 0 ? !uploadsComplete : index === 1 ? uploadsComplete && !analysisComplete : analysisComplete;
+
+        return (
+          <div
+            key={step.number}
+            className={`flex items-center gap-3 rounded-2xl border px-4 py-3 ${
+              active
+                ? 'border-cyan-400/40 bg-cyan-500/10'
+                : step.complete
+                  ? 'border-emerald-500/30 bg-emerald-500/5'
+                  : 'border-slate-800 bg-slate-900/40'
+            }`}
+          >
+            <span
+              className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl text-xs font-semibold ${
+                active
+                  ? 'bg-cyan-400 text-slate-950'
+                  : step.complete
+                    ? 'bg-emerald-400/15 text-emerald-200'
+                    : 'bg-slate-800 text-slate-400'
+              }`}
+            >
+              {step.complete ? '✓' : step.number}
+            </span>
+            <span className="min-w-0">
+              <span className={`block truncate text-sm font-medium ${active ? 'text-white' : 'text-slate-300'}`}>
+                {step.label}
+              </span>
+              <span className="block truncate text-xs text-slate-400">{step.detail}</span>
+            </span>
+          </div>
+        );
+      })}
+    </nav>
+  );
+}
+
+function FileStatus({ label, file, valid }: { label: string; file: File | null; valid: boolean }) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-xs font-medium text-slate-300">{label}</p>
+        <p className="truncate text-xs text-slate-500">{file?.name ?? 'Waiting for a file'}</p>
+      </div>
+      <span className={`shrink-0 text-xs font-medium ${valid ? 'text-emerald-300' : 'text-slate-500'}`}>
+        {valid ? 'Ready' : 'Required'}
+      </span>
+    </div>
   );
 }
 
@@ -464,11 +600,16 @@ function UploadCard({
         </span>
       </div>
 
-      <label className="mt-5 flex cursor-pointer flex-col gap-3 rounded-2xl border border-dashed border-slate-600 bg-slate-950/50 p-4 text-left transition hover:border-cyan-400/60 hover:bg-slate-950">
-        <span className="text-sm font-medium text-slate-200">Select file</span>
+      <label className="group mt-5 flex cursor-pointer items-center justify-between gap-4 rounded-2xl border border-dashed border-slate-600 bg-slate-950/50 p-4 text-left transition hover:border-cyan-400/60 hover:bg-slate-950 focus-within:border-cyan-400 focus-within:ring-2 focus-within:ring-cyan-500/30">
+        <span>
+          <span className="block text-sm font-medium text-slate-200">{file ? 'Replace selected file' : 'Choose a local file'}</span>
+          <span className="mt-1 block text-xs text-slate-400">
+            {fileKind === 'image' ? 'JPEG or PNG · Stored only in this browser' : 'CSV, JPEG, or PNG · Stored only in this browser'}
+          </span>
+        </span>
         <input aria-label={title} type="file" accept={accept} onChange={onChange} className="sr-only" />
-        <span className="inline-flex w-fit rounded-full border border-cyan-500/40 bg-cyan-500/10 px-3 py-1.5 text-sm text-cyan-100 transition hover:bg-cyan-500/20 focus:outline-none focus:ring-2 focus:ring-cyan-400">
-          Choose file
+        <span className="shrink-0 rounded-xl border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-sm font-medium text-cyan-100 transition group-hover:bg-cyan-500/20">
+          Browse
         </span>
       </label>
 
@@ -476,7 +617,7 @@ function UploadCard({
         <span className="truncate text-sm text-slate-300">{file ? file.name : 'No file selected'}</span>
       </div>
 
-      {error ? <p className="mt-3 text-sm text-rose-300">{error}</p> : null}
+      {error ? <p role="alert" className="mt-3 text-sm text-rose-300">{error}</p> : null}
 
       <div className="mt-4 overflow-hidden rounded-2xl border border-slate-700 bg-slate-950/60">
         {file && preview && !isCsv ? (
@@ -533,7 +674,7 @@ function AnalysisConfiguration({
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold text-white">Analysis configuration</h2>
         <span className="rounded-full border border-violet-500/40 bg-violet-500/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.2em] text-violet-200">
-          {config.strategy}
+          {getStrategyLabel(config.strategy)}
         </span>
       </div>
 
@@ -642,7 +783,7 @@ function AnalyzeButton({
         type="button"
         onClick={onClick}
         disabled={disabled}
-        className="inline-flex w-full items-center justify-center rounded-2xl bg-gradient-to-r from-cyan-500 to-sky-500 px-4 py-3 text-base font-semibold text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:from-cyan-400 hover:to-sky-400 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex w-full items-center justify-center rounded-2xl bg-linear-to-r from-cyan-500 to-sky-500 px-4 py-3 text-base font-semibold text-slate-950 shadow-lg shadow-cyan-500/20 transition hover:from-cyan-400 hover:to-sky-400 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
       >
         Analyze prototype data
       </button>
@@ -650,7 +791,7 @@ function AnalyzeButton({
       {validationMessage ? <p className="mt-3 text-sm text-rose-300">{validationMessage}</p> : null}
 
       {processingState.status !== 'idle' ? (
-        <div className="mt-4 flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-300">
+        <div role="status" aria-live="polite" className="mt-4 flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-300">
           <span
             className={`inline-block h-2.5 w-2.5 rounded-full ${
               processingState.status === 'complete' ? 'bg-emerald-400' : 'bg-cyan-400 animate-pulse'
@@ -675,16 +816,20 @@ function AnalysisViewer({
   thermalPreview: string | null;
 }) {
   const selectedLayerInfo = layerOptions.find((layer) => layer.id === selectedLayer) ?? layerOptions[2];
+  const isThermalLayer = selectedLayer === 'thermal';
+  const isSourceLayer = selectedLayer === 'rgb' || isThermalLayer;
+  const sourcePreview = isThermalLayer ? thermalPreview : rgbPreview;
 
   return (
-    <div className="rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
-      <div className="flex flex-wrap gap-2">
+    <div className="min-w-0 rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
+      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-2">
         {layerOptions.map((layer) => (
           <button
             key={layer.id}
             type="button"
             onClick={() => onLayerSelect(layer.id)}
-            className={`rounded-full border px-2.5 py-1.5 text-xs font-medium transition ${
+            aria-pressed={selectedLayer === layer.id}
+            className={`shrink-0 rounded-full border px-3 py-2 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-cyan-400 ${
               selectedLayer === layer.id
                 ? 'border-cyan-400 bg-cyan-500/15 text-cyan-100'
                 : 'border-slate-600 bg-slate-900 text-slate-300 hover:border-slate-500'
@@ -696,65 +841,208 @@ function AnalysisViewer({
       </div>
 
       <div className="mt-4 overflow-hidden rounded-2xl border border-slate-700 bg-slate-900">
-        <div className="relative aspect-[4/3] overflow-hidden bg-slate-800">
-          {selectedLayer === 'rgb' || selectedLayer === 'registration' || selectedLayer === 'mask' || selectedLayer === 'isotherm' || selectedLayer === 'final' ? (
-            rgbPreview ? <img src={rgbPreview} alt="RGB reference" className="h-full w-full object-cover" /> : <div className="h-full w-full bg-[radial-gradient(circle_at_center,_rgba(59,130,246,0.35),_rgba(15,23,42,0.9)_65%)]" />
+        <div className="relative aspect-4/3 overflow-hidden bg-slate-950">
+          {isSourceLayer && sourcePreview ? (
+            <img
+              src={sourcePreview}
+              alt={isThermalLayer ? 'Thermal input preview' : 'RGB source image'}
+              className="absolute inset-0 h-full w-full object-contain"
+            />
+          ) : (
+            <MockThermalMap layer={selectedLayer} />
+          )}
+
+          {!isSourceLayer && sourcePreview ? <ScanLayerOverlay layer={selectedLayer} /> : null}
+
+          <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 bg-gradient-to-b from-slate-950/90 to-transparent p-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-200">
+                {isThermalLayer && !thermalPreview ? 'Synthetic thermal preview' : selectedLayerInfo.label}
+              </p>
+              <p className="mt-1 text-xs text-slate-300">
+                {isThermalLayer && !thermalPreview ? 'Illustrative data · not measured temperatures' : selectedLayerInfo.description}
+              </p>
+            </div>
+            <span className="rounded-full border border-white/15 bg-slate-950/70 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-slate-200">
+              Demo view
+            </span>
+          </div>
+
+          {selectedLayer === 'final' ? (
+            <div className="absolute left-[62%] top-[44%] -translate-y-1/2 rounded-lg border border-red-300/50 bg-slate-950/85 px-2.5 py-1.5 text-xs font-medium text-red-100 shadow-lg">
+              Flagged area
+            </div>
           ) : null}
 
-          {selectedLayer === 'thermal' && thermalPreview ? (
-            <img src={thermalPreview} alt="Thermal input" className="h-full w-full object-cover" />
-          ) : null}
-
-          {selectedLayer === 'thermal' && !thermalPreview ? (
-            <div className="h-full w-full bg-[radial-gradient(circle_at_60%_50%,_rgba(248,113,113,0.28),_transparent_20%),radial-gradient(circle_at_50%_36%,_rgba(96,165,250,0.3),_transparent_25%),linear-gradient(135deg,_rgba(15,23,42,1),_rgba(30,41,59,1))]" />
-          ) : null}
-
-          {(selectedLayer === 'registration' || selectedLayer === 'final') && (
-            <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(96,165,250,0.18),rgba(34,197,94,0.08))]" />
-          )}
-
-          {selectedLayer === 'mask' && (
-            <div className="absolute inset-0">
-              <div className="absolute left-[26%] top-[28%] h-[42%] w-[31%] rounded-[36%] border-4 border-red-400/80 bg-red-500/20 shadow-[0_0_50px_rgba(248,113,113,0.4)]" />
-              <div className="absolute left-[52%] top-[46%] h-[22%] w-[18%] rounded-full border-4 border-amber-300/80 bg-amber-400/25 shadow-[0_0_30px_rgba(251,191,36,0.5)]" />
-            </div>
-          )}
-
-          {selectedLayer === 'isotherm' && (
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_60%_56%,rgba(251,146,60,0.28),transparent_12%),radial-gradient(circle_at_57%_52%,rgba(248,113,113,0.35),transparent_18%),linear-gradient(135deg,rgba(15,23,42,0.9),rgba(30,41,59,0.9))]">
-              <div className="absolute inset-x-[18%] top-[22%] h-[18%] rounded-full border-2 border-cyan-400/80" />
-              <div className="absolute inset-x-[30%] top-[34%] h-[20%] rounded-full border-2 border-sky-300/60" />
-              <div className="absolute inset-x-[40%] top-[48%] h-[18%] rounded-full border-2 border-red-300/60" />
-            </div>
-          )}
-
-          {(selectedLayer === 'registration' || selectedLayer === 'final') && (
-            <div className="absolute inset-0">
-              <div className="absolute left-[24%] top-[28%] h-[42%] w-[30%] rounded-[36%] border-4 border-cyan-300/80 bg-cyan-500/10" />
-              <div className="absolute left-[56%] top-[42%] h-[20%] w-[18%] rounded-[40%] border-4 border-amber-300/80 bg-amber-500/10" />
-            </div>
-          )}
-
-          {selectedLayer === 'final' && (
-            <div className="absolute inset-0 bg-[linear-gradient(160deg,transparent_60%,rgba(248,113,113,0.18)_100%)]" />
-          )}
+          <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-white/10 bg-slate-950/75 px-2.5 py-1.5 text-[10px] text-slate-300">
+            {isThermalLayer && thermalPreview ? 'Original thermal image' : 'Illustrative alignment · not a clinical measurement'}
+          </div>
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-slate-700 bg-slate-900/50 p-3">
+      <div className="mt-4 flex flex-col gap-4 rounded-2xl border border-slate-700 bg-slate-900/50 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Active layer</p>
           <p className="mt-1 text-sm font-medium text-slate-100">{selectedLayerInfo.label}</p>
           <p className="text-xs text-slate-400">{selectedLayerInfo.description}</p>
         </div>
 
-        <div className="flex gap-2">
-          <LegendSwatch label="Cooler / normal region" color="bg-sky-500/70" />
+        <div aria-label="Visualization legend" className="flex flex-wrap gap-x-4 gap-y-2">
+          <LegendSwatch label="Cooler / normal" color="bg-sky-500/70" />
           <LegendSwatch label="Elevated temperature" color="bg-amber-400/80" />
           <LegendSwatch label="Flagged region" color="bg-red-500/80" />
         </div>
       </div>
     </div>
+  );
+}
+
+function MockThermalMap({ layer }: { layer: VisualizationLayer }) {
+  const isMask = layer === 'mask';
+  const isIsotherm = layer === 'isotherm';
+  const isRgb = layer === 'rgb';
+
+  return (
+    <svg
+      role="img"
+      aria-label={isMask ? 'Illustrative anomaly mask' : isIsotherm ? 'Illustrative isotherm contour map' : 'Illustrative thermal map'}
+      viewBox="0 0 640 480"
+      preserveAspectRatio="xMidYMid meet"
+      className="absolute inset-0 h-full w-full"
+    >
+      <defs>
+        <linearGradient id="scan-bg" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor={isMask ? '#101825' : '#081827'} />
+          <stop offset="1" stopColor={isMask ? '#171c29' : '#10233a'} />
+        </linearGradient>
+        <linearGradient id="limb-fill" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor={isRgb ? '#9aa9b9' : '#285776'} />
+          <stop offset=".5" stopColor={isRgb ? '#d2dbe4' : '#427aa0'} />
+          <stop offset="1" stopColor={isRgb ? '#8496a7' : '#234c70'} />
+        </linearGradient>
+        <radialGradient id="heat-field">
+          <stop offset="0" stopColor="#fef08a" stopOpacity=".98" />
+          <stop offset=".28" stopColor="#fb923c" stopOpacity=".88" />
+          <stop offset=".58" stopColor="#ef4444" stopOpacity=".56" />
+          <stop offset="1" stopColor="#7c3aed" stopOpacity="0" />
+        </radialGradient>
+        <pattern id="scan-grid" width="32" height="32" patternUnits="userSpaceOnUse">
+          <path d="M32 0H0V32" fill="none" stroke="#9fb4ca" strokeOpacity=".07" strokeWidth="1" />
+          <circle cx="0" cy="0" r="1.2" fill="#9fb4ca" fillOpacity=".15" />
+        </pattern>
+        <pattern id="mask-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="9" height="9" fill="#7f1d1d" fillOpacity=".34" />
+          <path d="M0 0V9" stroke="#f87171" strokeOpacity=".9" strokeWidth="3" />
+        </pattern>
+        <filter id="hotspot-glow" x="-80%" y="-80%" width="260%" height="260%">
+          <feGaussianBlur stdDeviation="18" />
+        </filter>
+      </defs>
+
+      <rect width="640" height="480" fill="url(#scan-bg)" />
+      <rect width="640" height="480" fill="url(#scan-grid)" />
+      <path d="M80 415H560M320 46V434" stroke="#b6c8d8" strokeOpacity=".12" strokeDasharray="4 8" />
+
+      <g opacity={isMask ? '.62' : '.95'}>
+        <path
+          d="M204 44C187 78 181 121 190 163L211 231C216 248 215 272 205 293L172 371C165 389 175 407 194 412L222 418C239 420 252 411 256 394L278 304C283 281 281 254 271 231L254 165C248 132 259 87 275 54Z"
+          fill="url(#limb-fill)"
+          stroke="#c5d5e2"
+          strokeOpacity=".5"
+          strokeWidth="2"
+        />
+        <path
+          d="M366 44C383 78 389 121 380 163L359 231C354 248 355 272 365 293L398 371C405 389 395 407 376 412L348 418C331 420 318 411 314 394L292 304C287 281 289 254 299 231L316 165C322 132 311 87 295 54Z"
+          fill="url(#limb-fill)"
+          stroke="#c5d5e2"
+          strokeOpacity=".5"
+          strokeWidth="2"
+        />
+        <path d="M229 180C247 191 258 211 260 231M335 180C353 191 364 211 366 231" fill="none" stroke="#e2e8f0" strokeOpacity=".25" strokeWidth="2" />
+      </g>
+
+      {!isRgb && !isMask ? (
+        <>
+          <ellipse cx="371" cy="211" rx="91" ry="78" fill="url(#heat-field)" filter="url(#hotspot-glow)" />
+          <ellipse cx="371" cy="211" rx="72" ry="57" fill="url(#heat-field)" opacity=".74" />
+          <ellipse cx="253" cy="211" rx="60" ry="50" fill="#38bdf8" opacity=".12" />
+        </>
+      ) : null}
+
+      {isMask ? (
+        <>
+          <path d="M318 169C338 144 382 139 410 163C438 187 437 224 414 247C391 270 348 269 324 247C302 227 298 193 318 169Z" fill="url(#mask-hatch)" stroke="#fca5a5" strokeWidth="3" strokeDasharray="7 5" />
+          <circle cx="371" cy="211" r="8" fill="#fff" />
+          <path d="M371 191V231M351 211H391" stroke="#fff" strokeWidth="2" />
+          <text x="371" y="286" textAnchor="middle" fill="#fecaca" fontSize="13" fontWeight="600">FLAGGED REGION</text>
+        </>
+      ) : null}
+
+      {isIsotherm ? (
+        <g fill="none" strokeWidth="2.5">
+          <path d="M292 211C292 165 326 130 371 130C416 130 450 165 450 211C450 257 416 292 371 292C326 292 292 257 292 211Z" stroke="#67e8f9" />
+          <path d="M315 211C315 178 340 153 371 153C402 153 427 178 427 211C427 244 402 269 371 269C340 269 315 244 315 211Z" stroke="#fbbf24" />
+          <path d="M339 211C339 193 353 179 371 179C389 179 403 193 403 211C403 229 389 243 371 243C353 243 339 229 339 211Z" stroke="#fb7185" />
+        </g>
+      ) : null}
+
+      {(layer === 'registration' || layer === 'final') ? (
+        <g fill="none">
+          <path d="M199 229C218 242 245 244 265 230M355 229C374 242 401 244 421 230" stroke="#a5f3fc" strokeWidth="3" strokeDasharray="8 5" />
+          <ellipse cx="371" cy="211" rx="54" ry="45" stroke="#fcd34d" strokeWidth="2.5" />
+          <circle cx="397" cy="211" r="7" fill="#fff" stroke="#f87171" strokeWidth="4" />
+          <path d="M405 207L455 179H505" stroke="#fca5a5" strokeWidth="2" />
+          <text x="510" y="183" fill="#fee2e2" fontSize="12">Epicenter</text>
+          {layer === 'final' ? (
+            <path d="M322 167C341 143 383 140 408 163C435 187 435 222 412 246C389 269 350 267 326 247C303 228 301 191 322 167Z" fill="#ef4444" fillOpacity=".24" stroke="#fca5a5" strokeWidth="3" />
+          ) : null}
+        </g>
+      ) : null}
+
+      <g fill="#cbd5e1" fillOpacity=".72" fontSize="10" letterSpacing="2">
+        <text x="30" y="36">LEFT</text>
+        <text x="566" y="36">RIGHT</text>
+        <text x="30" y="454">ILLUSTRATIVE ONLY</text>
+      </g>
+    </svg>
+  );
+}
+
+function ScanLayerOverlay({ layer }: { layer: VisualizationLayer }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 640 480"
+      preserveAspectRatio="none"
+      className="absolute inset-0 h-full w-full"
+    >
+      <defs>
+        <pattern id="overlay-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <rect width="9" height="9" fill="#7f1d1d" fillOpacity=".3" />
+          <path d="M0 0V9" stroke="#f87171" strokeOpacity=".9" strokeWidth="3" />
+        </pattern>
+      </defs>
+      {layer === 'mask' ? (
+        <path d="M318 169C338 144 382 139 410 163C438 187 437 224 414 247C391 270 348 269 324 247C302 227 298 193 318 169Z" fill="url(#overlay-hatch)" stroke="#fecaca" strokeWidth="3" strokeDasharray="7 5" />
+      ) : null}
+      {layer === 'isotherm' ? (
+        <g fill="none" strokeWidth="3">
+          <ellipse cx="371" cy="211" rx="82" ry="69" stroke="#67e8f9" />
+          <ellipse cx="371" cy="211" rx="57" ry="48" stroke="#fbbf24" />
+          <ellipse cx="371" cy="211" rx="31" ry="27" stroke="#fb7185" />
+        </g>
+      ) : null}
+      {(layer === 'registration' || layer === 'final') ? (
+        <>
+          <ellipse cx="371" cy="211" rx="58" ry="48" fill="#f97316" fillOpacity=".22" stroke="#fde68a" strokeWidth="3" />
+          <path d="M338 211C338 193 353 178 371 178C389 178 404 193 404 211C404 229 389 244 371 244" fill="none" stroke="#fb7185" strokeWidth="3" />
+          <circle cx="397" cy="211" r="8" fill="#fff" stroke="#ef4444" strokeWidth="4" />
+          {layer === 'final' ? (
+            <path d="M320 170C341 143 383 140 411 164C437 187 436 224 412 248C388 270 348 269 323 246C301 226 299 193 320 170Z" fill="url(#overlay-hatch)" fillOpacity=".7" stroke="#fecaca" strokeWidth="3" />
+          ) : null}
+        </>
+      ) : null}
+    </svg>
   );
 }
 
