@@ -4,7 +4,7 @@ import type { AnalysisResponse } from './api/types';
 
 type AnalysisStrategy = 'bilateral' | 'midline' | 'normative';
 type BodyRegion = 'limb' | 'handFoot' | 'spine' | 'localized';
-type VisualizationLayer = 'rgb' | 'thermal' | 'registration' | 'mask' | 'isotherm' | 'final';
+type VisualizationLayer = 'rgb' | 'thermal' | 'registration' | 'mask' | 'isotherm' | 'final' | 'bilateral_inferno' | 'bilateral_blended';
 
 type UploadState = {
   rgb: File | null;
@@ -46,6 +46,8 @@ type MockAnalysisResult = {
   disclaimer: string;
   visualLayers: { id: VisualizationLayer; label: string; description: string }[];
   overlayDataUrl: string | null;
+  bilateralInfernoDataUrl: string | null;
+  bilateralBlendedDataUrl: string | null;
 };
 
 const strategyOptions: { value: AnalysisStrategy; label: string }[] = [
@@ -68,6 +70,8 @@ const layerOptions: { id: VisualizationLayer; label: string; description: string
   { id: 'mask', label: 'Anomaly mask', description: 'Available in a later analysis phase' },
   { id: 'isotherm', label: 'Isotherm map', description: 'Available in a later analysis phase' },
   { id: 'final', label: 'Final overlay', description: 'Basic generated thermal overlay' },
+  { id: 'bilateral_inferno', label: 'Isolated Inferno regions', description: 'Detected regions on black' },
+  { id: 'bilateral_blended', label: 'Bilateral blended overlay', description: 'Thermal regions blended with RGB' },
 ];
 
 const defaultConfig: Configuration = {
@@ -125,6 +129,8 @@ const buildResultFromApi = (
   upload: UploadState,
 ): MockAnalysisResult => {
   const overlay = response.artifacts.find((artifact) => artifact.name === 'final_overlay');
+  const bilateralInferno = response.artifacts.find((artifact) => artifact.name === 'bilateral_inferno_regions');
+  const bilateralBlended = response.artifacts.find((artifact) => artifact.name === 'bilateral_blended_overlay');
   const bodyRegion =
     Object.entries(bodyRegionToApi).find(([, value]) => value === response.configuration.body_region)?.[0] as
       | BodyRegion
@@ -149,8 +155,12 @@ const buildResultFromApi = (
       ...response.warnings,
     ],
     disclaimer: response.limitation,
-    visualLayers: layerOptions,
+    visualLayers: response.configuration.strategy === 'bilateral'
+      ? layerOptions
+      : layerOptions.filter((layer) => layer.id !== 'bilateral_inferno' && layer.id !== 'bilateral_blended'),
     overlayDataUrl: overlay?.data_url ?? null,
+    bilateralInfernoDataUrl: bilateralInferno?.data_url ?? null,
+    bilateralBlendedDataUrl: bilateralBlended?.data_url ?? null,
   };
 };
 
@@ -171,8 +181,11 @@ function App() {
   });
   const [analysisResult, setAnalysisResult] = useState<MockAnalysisResult | null>(null);
   const [selectedLayer, setSelectedLayer] = useState<VisualizationLayer>('registration');
+  const [blendIntensity, setBlendIntensity] = useState(0.5);
   const [validationMessage, setValidationMessage] = useState('');
   const processingTimeouts = useRef<number[]>([]);
+  const blendTimer = useRef<number | null>(null);
+  const blendRequestId = useRef(0);
 
   const clearProcessingTimeouts = () => {
     processingTimeouts.current.forEach(window.clearTimeout);
@@ -335,6 +348,8 @@ function App() {
 
     setValidationMessage('');
     clearProcessingTimeouts();
+    if (blendTimer.current !== null) window.clearTimeout(blendTimer.current);
+    blendRequestId.current += 1;
     setProcessingState({ status: 'processing', message: 'Sending files to backend' });
 
     try {
@@ -347,6 +362,7 @@ function App() {
               baseline_max_celsius: config.baselineMax,
             }
           : { delta_t_threshold_celsius: config.deltaT }),
+        blend_intensity: blendIntensity,
       });
       setProcessingState({ status: 'complete', message: 'Backend overlay complete' });
       setAnalysisResult(buildResultFromApi(response, config, upload));
@@ -355,6 +371,31 @@ function App() {
       setProcessingState({ status: 'idle', message: 'Backend request failed' });
       setValidationMessage(error instanceof Error ? error.message : 'The backend request failed.');
     }
+  };
+
+  const handleBlendIntensityChange = (value: number) => {
+    setBlendIntensity(value);
+    if (config.strategy !== 'bilateral' || !upload.rgb || !upload.thermal) return;
+    if (blendTimer.current !== null) window.clearTimeout(blendTimer.current);
+    const requestId = ++blendRequestId.current;
+    blendTimer.current = window.setTimeout(async () => {
+      setProcessingState({ status: 'processing', message: 'Updating blended image' });
+      try {
+        const response = await analyze(upload.rgb!, upload.thermal!, {
+          strategy: config.strategy,
+          body_region: bodyRegionToApi[config.bodyRegion],
+          delta_t_threshold_celsius: config.deltaT,
+          blend_intensity: value,
+        });
+        if (requestId !== blendRequestId.current) return;
+        setAnalysisResult(buildResultFromApi(response, config, upload));
+        setProcessingState({ status: 'complete', message: `Blend intensity ${value.toFixed(2)}` });
+      } catch (error) {
+        if (requestId !== blendRequestId.current) return;
+        setProcessingState({ status: 'complete', message: 'Image update failed' });
+        setValidationMessage(error instanceof Error ? error.message : 'Could not update the blended image.');
+      }
+    }, 180);
   };
 
   return (
@@ -456,6 +497,11 @@ function App() {
                 rgbPreview={upload.rgbPreview}
                 thermalPreview={upload.thermalPreview}
                 overlayDataUrl={analysisResult.overlayDataUrl}
+                bilateralInfernoDataUrl={analysisResult.bilateralInfernoDataUrl}
+                bilateralBlendedDataUrl={analysisResult.bilateralBlendedDataUrl}
+                visualLayers={analysisResult.visualLayers}
+                blendIntensity={blendIntensity}
+                onBlendIntensityChange={handleBlendIntensityChange}
               />
 
               <div className="min-w-0">
@@ -829,14 +875,24 @@ function AnalysisViewer({
   rgbPreview,
   thermalPreview,
   overlayDataUrl,
+  bilateralInfernoDataUrl,
+  bilateralBlendedDataUrl,
+  visualLayers,
+  blendIntensity,
+  onBlendIntensityChange,
 }: {
   selectedLayer: VisualizationLayer;
   onLayerSelect: (value: VisualizationLayer) => void;
   rgbPreview: string | null;
   thermalPreview: string | null;
   overlayDataUrl: string | null;
+  bilateralInfernoDataUrl: string | null;
+  bilateralBlendedDataUrl: string | null;
+  visualLayers: MockAnalysisResult['visualLayers'];
+  blendIntensity: number;
+  onBlendIntensityChange: (value: number) => void;
 }) {
-  const selectedLayerInfo = layerOptions.find((layer) => layer.id === selectedLayer) ?? layerOptions[2];
+  const selectedLayerInfo = visualLayers.find((layer) => layer.id === selectedLayer) ?? visualLayers[0];
   const isThermalLayer = selectedLayer === 'thermal';
   const isSourceLayer = selectedLayer === 'rgb' || isThermalLayer;
   const sourcePreview = isThermalLayer ? thermalPreview : rgbPreview;
@@ -844,7 +900,7 @@ function AnalysisViewer({
   return (
     <div className="min-w-0 rounded-2xl border border-slate-700 bg-slate-950/70 p-4">
       <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-2">
-        {layerOptions.map((layer) => (
+        {visualLayers.map((layer) => (
           <button
             key={layer.id}
             type="button"
@@ -869,6 +925,14 @@ function AnalysisViewer({
               alt={isThermalLayer ? 'Thermal input preview' : 'RGB source image'}
               className="absolute inset-0 h-full w-full object-contain"
             />
+          ) : selectedLayer === 'bilateral_inferno' ? (
+            bilateralInfernoDataUrl ? (
+              <img src={bilateralInfernoDataUrl} alt="Isolated Inferno thermal regions on black" className="absolute inset-0 h-full w-full object-contain" />
+            ) : <UnavailableLayer message="The isolated bilateral thermal image is unavailable." />
+          ) : selectedLayer === 'bilateral_blended' ? (
+            bilateralBlendedDataUrl ? (
+              <img src={bilateralBlendedDataUrl} alt="Bilateral thermal regions blended with RGB" className="absolute inset-0 h-full w-full object-contain" />
+            ) : <UnavailableLayer message="The bilateral blended image is unavailable." />
           ) : selectedLayer === 'registration' || selectedLayer === 'final' ? (
             overlayDataUrl ? (
               <img
@@ -907,6 +971,39 @@ function AnalysisViewer({
         </div>
       </div>
 
+      {visualLayers.some((layer) => layer.id === 'bilateral_blended') ? (
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <figure className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-900">
+            <figcaption className="px-3 py-2 text-sm font-medium text-slate-200">
+              Isolated Inferno regions
+            </figcaption>
+            {bilateralInfernoDataUrl ? (
+              <img
+                src={bilateralInfernoDataUrl}
+                alt="Detected bilateral thermal regions colored with Inferno on black"
+                className="aspect-4/3 w-full bg-black object-contain"
+              />
+            ) : (
+              <UnavailableLayer message="The isolated bilateral thermal image is unavailable." />
+            )}
+          </figure>
+          <figure className="overflow-hidden rounded-2xl border border-slate-700 bg-slate-900">
+            <figcaption className="px-3 py-2 text-sm font-medium text-slate-200">
+              RGB / thermal blend · {blendIntensity.toFixed(2)}
+            </figcaption>
+            {bilateralBlendedDataUrl ? (
+              <img
+                src={bilateralBlendedDataUrl}
+                alt="Detected bilateral thermal regions blended with the RGB image"
+                className="aspect-4/3 w-full bg-slate-950 object-contain"
+              />
+            ) : (
+              <UnavailableLayer message="The bilateral blended image is unavailable." />
+            )}
+          </figure>
+        </div>
+      ) : null}
+
       <div className="mt-4 flex flex-col gap-4 rounded-2xl border border-slate-700 bg-slate-900/50 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Active layer</p>
@@ -920,6 +1017,33 @@ function AnalysisViewer({
           <LegendSwatch label="Flagged region" color="bg-red-500/80" />
         </div>
       </div>
+      {visualLayers.some((layer) => layer.id === 'bilateral_blended') ? (
+        <div className="mt-4 rounded-2xl border border-slate-700 bg-slate-900/50 p-4">
+          <div className="flex items-center justify-between gap-4">
+            <label htmlFor="blend-intensity" className="text-sm font-medium text-slate-200">
+              Blend intensity
+            </label>
+            <output htmlFor="blend-intensity" className="text-sm tabular-nums text-cyan-200">
+              {blendIntensity.toFixed(2)}
+            </output>
+          </div>
+          <input
+            id="blend-intensity"
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={blendIntensity}
+            onChange={(event) => onBlendIntensityChange(Number(event.target.value))}
+            className="mt-3 w-full accent-cyan-400"
+            aria-label="Blend intensity"
+          />
+          <div className="mt-1 flex justify-between text-xs text-slate-400">
+            <span>RGB only</span>
+            <span>Thermal composite only</span>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -11,6 +11,7 @@ class AnalysisConfigurationRequest(BaseModel):
     delta_t_threshold_celsius: float | None = Field(default=None, gt=0)
     baseline_min_celsius: float | None = None
     baseline_max_celsius: float | None = None
+    blend_intensity: float = Field(default=0.5, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def validate_strategy_values(self) -> "AnalysisConfigurationRequest":

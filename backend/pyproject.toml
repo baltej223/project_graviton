@@ -9,6 +9,7 @@ description = "Phase 1 API and processing engine for the Multimodal Bioheat Trac
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.110,<1",
+  "matplotlib>=3.8,<4",
   "numpy>=1.26,<3",
   "opencv-python-headless>=4.9,<5",
   "pillow>=10,<12",

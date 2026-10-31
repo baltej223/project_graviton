@@ -88,7 +88,11 @@ async def analyze_uploads(
         metrics=MetricsResponse(**result.metrics),
         artifacts=[
             ArtifactDescriptorResponse(**artifact)
-            for artifact in create_overlay_descriptors(ingestion)
+            for artifact in create_overlay_descriptors(
+                ingestion,
+                include_bilateral=configuration.strategy == "bilateral",
+                blend_intensity=configuration_request.blend_intensity,
+            )
         ],
         explanation=result.explanation,
         warnings=[*ingestion.warnings, *result.warnings],

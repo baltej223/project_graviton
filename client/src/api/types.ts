@@ -6,6 +6,7 @@ export type AnalysisConfiguration = {
   delta_t_threshold_celsius?: number;
   baseline_min_celsius?: number;
   baseline_max_celsius?: number;
+  blend_intensity?: number;
 };
 
 export type ArtifactDescriptor = {
