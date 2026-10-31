@@ -11,7 +11,7 @@ The system should run on ordinary CPU hardware and should prefer deterministic c
 - **React**: Single-page dashboard and user workflow.
 - **TypeScript**: Type-safe UI state, API contracts, metrics, and analysis results.
 - **Vite**: Lightweight development server and production bundling.
-- **CSS**: Responsive layout for the upload screen, analysis dashboard, image comparison, metric cards, and report controls.
+- **Tailwind CSS**: Responsive layout for the upload screen, analysis dashboard, image comparison, metric cards, and report controls.
 - **Browser File APIs**: Local preview and upload of RGB and thermal files.
 
 The frontend is responsible for:
