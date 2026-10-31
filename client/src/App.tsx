@@ -1,4 +1,6 @@
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { analyze, getConfigurationOptions } from './api/client';
+import type { AnalysisResponse } from './api/types';
 
 type AnalysisStrategy = 'bilateral' | 'midline' | 'normative';
 type BodyRegion = 'limb' | 'handFoot' | 'spine' | 'localized';
@@ -43,6 +45,7 @@ type MockAnalysisResult = {
   methodology: string[];
   disclaimer: string;
   visualLayers: { id: VisualizationLayer; label: string; description: string }[];
+  overlayDataUrl: string | null;
 };
 
 const strategyOptions: { value: AnalysisStrategy; label: string }[] = [
@@ -61,10 +64,10 @@ const regionOptions: { value: BodyRegion; label: string }[] = [
 const layerOptions: { id: VisualizationLayer; label: string; description: string }[] = [
   { id: 'rgb', label: 'RGB source image', description: 'Clinical image reference' },
   { id: 'thermal', label: 'Thermal preview', description: 'Tissue heat map' },
-  { id: 'registration', label: 'Registration overlay', description: 'Aligned thermal overlay' },
-  { id: 'mask', label: 'Anomaly mask', description: 'Flagged region' },
-  { id: 'isotherm', label: 'Isotherm map', description: 'Thermal contour pattern' },
-  { id: 'final', label: 'Final overlay', description: 'Clinical explanation layer' },
+  { id: 'registration', label: 'Registration overlay', description: 'Basic generated thermal overlay' },
+  { id: 'mask', label: 'Anomaly mask', description: 'Available in a later analysis phase' },
+  { id: 'isotherm', label: 'Isotherm map', description: 'Available in a later analysis phase' },
+  { id: 'final', label: 'Final overlay', description: 'Basic generated thermal overlay' },
 ];
 
 const defaultConfig: Configuration = {
@@ -97,7 +100,7 @@ const getStrategyExplanation = (strategy: AnalysisStrategy) => {
     case 'normative':
       return 'The localized temperature falls outside the configured body-region baseline.';
     default:
-      return 'The flagged region is hotter than the corresponding reference side by more than the configured ΔT threshold.';
+      return 'The selected region is compared with the corresponding reference side.';
   }
 };
 
@@ -106,35 +109,50 @@ const getConfigSummary = (config: Configuration) => {
     return `${config.baselineMin.toFixed(1)}°C–${config.baselineMax.toFixed(1)}°C baseline`;
   }
 
-  return `${config.deltaT.toFixed(1)}°C ΔT threshold`;
+  return 'Backend comparison defaults';
 };
 
-const buildMockResult = (config: Configuration, upload: UploadState): MockAnalysisResult => ({
-  strategyLabel: getStrategyLabel(config.strategy),
-  regionLabel: getRegionLabel(config.bodyRegion),
-  configuration: { ...config },
-  sourceFiles: {
-    rgb: upload.rgb?.name ?? '',
-    thermal: upload.thermal?.name ?? '',
-  },
-  metrics: {
-    maxTemperature: '37.8 °C',
-    maxDeltaT: '+1.6 °C',
-    epicenter: 'x 62%, y 44%',
-    gradient: '0.42 °C/cm',
-    pattern: 'Deep / diffuse',
-    strategy: getStrategyLabel(config.strategy),
-  },
-  explanation: getStrategyExplanation(config.strategy),
-  methodology: [
-    'RGB and thermal inputs are represented together.',
-    'The result is based on a configurable comparison strategy.',
-    'Isotherms and gradient are explanatory visualizations.',
-    'Phase 1 uses mocked values only.',
-  ],
-  disclaimer: 'Prototype output for triage and monitoring assistance only. It is not a diagnosis and must be interpreted by a qualified clinician.',
-  visualLayers: layerOptions,
-});
+const bodyRegionToApi: Record<BodyRegion, string> = {
+  limb: 'limb_joint',
+  handFoot: 'hand_foot',
+  spine: 'spine_torso',
+  localized: 'localized_asymmetric_region',
+};
+
+const buildResultFromApi = (
+  response: AnalysisResponse,
+  config: Configuration,
+  upload: UploadState,
+): MockAnalysisResult => {
+  const overlay = response.artifacts.find((artifact) => artifact.name === 'final_overlay');
+  const bodyRegion =
+    Object.entries(bodyRegionToApi).find(([, value]) => value === response.configuration.body_region)?.[0] as
+      | BodyRegion
+      | undefined;
+  return {
+    strategyLabel: getStrategyLabel(response.configuration.strategy),
+    regionLabel: getRegionLabel(bodyRegion ?? config.bodyRegion),
+    configuration: { ...config },
+    sourceFiles: { rgb: upload.rgb?.name ?? '', thermal: upload.thermal?.name ?? '' },
+    metrics: {
+      maxTemperature: `${response.metrics.maximum_temperature_celsius.toFixed(1)} °C`,
+      maxDeltaT: `${response.metrics.maximum_delta_t_celsius >= 0 ? '+' : ''}${response.metrics.maximum_delta_t_celsius.toFixed(1)} °C`,
+      epicenter: `x ${Math.round(response.metrics.epicenter_x * 100)}%, y ${Math.round(response.metrics.epicenter_y * 100)}%`,
+      gradient: `${response.metrics.thermal_gradient_celsius_per_cm.toFixed(2)} °C/cm`,
+      pattern: response.metrics.estimated_pattern.replaceAll('_', ' / '),
+      strategy: getStrategyLabel(response.configuration.strategy),
+    },
+    explanation: response.explanation,
+    methodology: [
+      'The backend generated a basic thermal-to-RGB resize overlay.',
+      'Raw thermal values remain separate from visualization scaling.',
+      ...response.warnings,
+    ],
+    disclaimer: response.limitation,
+    visualLayers: layerOptions,
+    overlayDataUrl: overlay?.data_url ?? null,
+  };
+};
 
 function App() {
   const [upload, setUpload] = useState<UploadState>({
@@ -178,6 +196,21 @@ function App() {
       }
     };
   }, [upload.rgbPreview, upload.thermalPreview]);
+
+  useEffect(() => {
+    getConfigurationOptions()
+      .then((options) => {
+        setConfig((previous) => ({
+          ...previous,
+          deltaT: options.defaults.delta_t_threshold_celsius,
+          baselineMin: options.defaults.baseline_min_celsius,
+          baselineMax: options.defaults.baseline_max_celsius,
+        }));
+      })
+      .catch(() => {
+        setValidationMessage('Backend configuration options could not be loaded; local defaults are being used.');
+      });
+  }, []);
 
   const canAnalyze = useMemo(
     () => Boolean(upload.rgb && upload.thermal && !upload.rgbError && !upload.thermalError),
@@ -273,7 +306,7 @@ function App() {
     }));
   };
 
-  const handleAnalyze = () => {
+  const handleAnalyze = async () => {
     if (processingState.status === 'processing') {
       return;
     }
@@ -286,13 +319,6 @@ function App() {
     if (upload.rgbError || upload.thermalError) {
       setValidationMessage('Please fix the upload validation errors before continuing.');
       return;
-    }
-
-    if (config.strategy !== 'normative') {
-      if (!Number.isFinite(config.deltaT) || config.deltaT <= 0) {
-        setValidationMessage('The ΔT threshold must be a positive value.');
-        return;
-      }
     }
 
     if (config.strategy === 'normative') {
@@ -309,17 +335,26 @@ function App() {
 
     setValidationMessage('');
     clearProcessingTimeouts();
-    setProcessingState({ status: 'processing', message: 'Upload validated' });
+    setProcessingState({ status: 'processing', message: 'Sending files to backend' });
 
-    processingTimeouts.current.push(window.setTimeout(() => {
-      setProcessingState({ status: 'processing', message: 'Registration preview prepared' });
-    }, 700));
-
-    processingTimeouts.current.push(window.setTimeout(() => {
-      setProcessingState({ status: 'complete', message: 'Mock analysis complete' });
-      setAnalysisResult(buildMockResult(config, upload));
-      processingTimeouts.current = [];
-    }, 1600));
+    try {
+      const response = await analyze(upload.rgb, upload.thermal, {
+        strategy: config.strategy,
+        body_region: bodyRegionToApi[config.bodyRegion],
+        ...(config.strategy === 'normative'
+          ? {
+              baseline_min_celsius: config.baselineMin,
+              baseline_max_celsius: config.baselineMax,
+            }
+          : { delta_t_threshold_celsius: config.deltaT }),
+      });
+      setProcessingState({ status: 'complete', message: 'Backend overlay complete' });
+      setAnalysisResult(buildResultFromApi(response, config, upload));
+      setSelectedLayer('final');
+    } catch (error) {
+      setProcessingState({ status: 'idle', message: 'Backend request failed' });
+      setValidationMessage(error instanceof Error ? error.message : 'The backend request failed.');
+    }
   };
 
   return (
@@ -404,7 +439,7 @@ function App() {
             <div className="flex flex-col gap-2 border-b border-slate-700 pb-5 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.25em] text-cyan-300">Analysis dashboard</p>
-                <h2 className="mt-2 text-2xl font-semibold text-white">Mock result overview</h2>
+                <h2 className="mt-2 text-2xl font-semibold text-white">Backend overlay result</h2>
                 <p className="mt-1 text-sm text-slate-400">
                   {analysisResult.regionLabel} · {analysisResult.strategyLabel}
                 </p>
@@ -420,20 +455,21 @@ function App() {
                 onLayerSelect={setSelectedLayer}
                 rgbPreview={upload.rgbPreview}
                 thermalPreview={upload.thermalPreview}
+                overlayDataUrl={analysisResult.overlayDataUrl}
               />
 
               <div className="min-w-0">
                 <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-slate-200">Key indicators</h3>
-                  <span className="text-xs text-slate-400">Demo values</span>
+                  <h3 className="text-sm font-semibold text-slate-200">Overlay status</h3>
+                  <span className="text-xs text-slate-400">Phase 3 feature</span>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                  <MetricCard label="Maximum temperature" value={analysisResult.metrics.maxTemperature} />
-                  <MetricCard label="Maximum ΔT" value={analysisResult.metrics.maxDeltaT} />
-                  <MetricCard label="Epicenter" value={analysisResult.metrics.epicenter} />
-                  <MetricCard label="Thermal gradient" value={analysisResult.metrics.gradient} />
-                  <MetricCard label="Estimated pattern" value={analysisResult.metrics.pattern} />
-                  <MetricCard label="Analysis strategy" value={analysisResult.metrics.strategy} />
+                <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+                  <p className="text-sm font-semibold text-emerald-200">Basic overlay generated</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">
+                    The thermal input was resized to the RGB dimensions and blended into a PNG overlay.
+                    Registration quality, anomaly masks, isotherms, epicenter, and clinical metrics are not
+                    implemented in this phase.
+                  </p>
                 </div>
               </div>
             </div>
@@ -667,8 +703,6 @@ function AnalysisConfiguration({
   config: Configuration;
   onChange: <K extends keyof Configuration>(key: K, value: Configuration[K]) => void;
 }) {
-  const isDeltaVisible = config.strategy === 'bilateral' || config.strategy === 'midline';
-
   return (
     <div className="rounded-3xl border border-slate-700 bg-slate-900/80 p-5 shadow-lg shadow-slate-950/20">
       <div className="flex items-center justify-between">
@@ -715,22 +749,7 @@ function AnalysisConfiguration({
           </select>
         </div>
 
-        {isDeltaVisible ? (
-          <div>
-            <label htmlFor="deltaT" className="mb-2 block text-sm font-medium text-slate-200">
-              ΔT threshold (°C)
-            </label>
-            <input
-              id="deltaT"
-              type="number"
-              min="0.1"
-              step="0.1"
-              value={config.deltaT}
-              onChange={(event) => onChange('deltaT', Number(event.target.value))}
-              className="w-full rounded-xl border border-slate-600 bg-slate-950 px-3 py-2.5 text-slate-100 outline-none transition focus:border-cyan-400 focus:ring-2 focus:ring-cyan-500/30"
-            />
-          </div>
-        ) : (
+        {config.strategy === 'normative' ? (
           <div className="grid gap-4 sm:grid-cols-2">
             <div>
               <label htmlFor="baselineMin" className="mb-2 block text-sm font-medium text-slate-200">
@@ -760,7 +779,7 @@ function AnalysisConfiguration({
               />
             </div>
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   );
@@ -809,11 +828,13 @@ function AnalysisViewer({
   onLayerSelect,
   rgbPreview,
   thermalPreview,
+  overlayDataUrl,
 }: {
   selectedLayer: VisualizationLayer;
   onLayerSelect: (value: VisualizationLayer) => void;
   rgbPreview: string | null;
   thermalPreview: string | null;
+  overlayDataUrl: string | null;
 }) {
   const selectedLayerInfo = layerOptions.find((layer) => layer.id === selectedLayer) ?? layerOptions[2];
   const isThermalLayer = selectedLayer === 'thermal';
@@ -848,11 +869,19 @@ function AnalysisViewer({
               alt={isThermalLayer ? 'Thermal input preview' : 'RGB source image'}
               className="absolute inset-0 h-full w-full object-contain"
             />
+          ) : selectedLayer === 'registration' || selectedLayer === 'final' ? (
+            overlayDataUrl ? (
+              <img
+                src={overlayDataUrl}
+                alt="Backend-generated basic thermal overlay"
+                className="absolute inset-0 h-full w-full object-contain"
+              />
+            ) : (
+              <UnavailableLayer message="The backend overlay is not available." />
+            )
           ) : (
-            <MockThermalMap layer={selectedLayer} />
+            <UnavailableLayer message="This analysis layer is not implemented yet." />
           )}
-
-          {!isSourceLayer && sourcePreview ? <ScanLayerOverlay layer={selectedLayer} /> : null}
 
           <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 bg-gradient-to-b from-slate-950/90 to-transparent p-4">
             <div>
@@ -868,14 +897,12 @@ function AnalysisViewer({
             </span>
           </div>
 
-          {selectedLayer === 'final' ? (
-            <div className="absolute left-[62%] top-[44%] -translate-y-1/2 rounded-lg border border-red-300/50 bg-slate-950/85 px-2.5 py-1.5 text-xs font-medium text-red-100 shadow-lg">
-              Flagged area
-            </div>
-          ) : null}
-
           <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-white/10 bg-slate-950/75 px-2.5 py-1.5 text-[10px] text-slate-300">
-            {isThermalLayer && thermalPreview ? 'Original thermal image' : 'Illustrative alignment · not a clinical measurement'}
+            {selectedLayer === 'final' && overlayDataUrl
+              ? 'Backend-generated basic overlay · no epicenter or anomaly calculation yet'
+              : isThermalLayer && thermalPreview
+                ? 'Original thermal image'
+                : 'Illustrative alignment · not a clinical measurement'}
           </div>
         </div>
       </div>
@@ -892,6 +919,17 @@ function AnalysisViewer({
           <LegendSwatch label="Elevated temperature" color="bg-amber-400/80" />
           <LegendSwatch label="Flagged region" color="bg-red-500/80" />
         </div>
+      </div>
+    </div>
+  );
+}
+
+function UnavailableLayer({ message }: { message: string }) {
+  return (
+    <div className="absolute inset-0 grid place-items-center bg-slate-950 p-8 text-center">
+      <div>
+        <p className="text-sm font-semibold text-slate-200">Not available in Phase 3</p>
+        <p className="mt-2 text-xs leading-5 text-slate-400">{message}</p>
       </div>
     </div>
   );
@@ -1063,7 +1101,7 @@ function ExplanationPanel({ config, strategyLabel }: { config: Configuration; st
       <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Explanation</p>
 
       <p className="mt-4 text-base text-slate-100">
-        {config.strategy === 'bilateral' && 'The flagged region is hotter than the corresponding reference side by more than the configured ΔT threshold.'}
+        {config.strategy === 'bilateral' && 'The selected region is compared with the corresponding reference side.'}
         {config.strategy === 'midline' && 'The flagged region differs from the corresponding internal side of the same structure.'}
         {config.strategy === 'normative' && 'The localized temperature falls outside the configured body-region baseline.'}
       </p>
@@ -1072,7 +1110,7 @@ function ExplanationPanel({ config, strategyLabel }: { config: Configuration; st
         <p className="text-sm text-slate-300">
           Strategy: <span className="font-medium text-cyan-200">{strategyLabel}</span>
         </p>
-        <p className="mt-2 text-sm text-slate-300">Threshold: {getConfigSummary(config)}</p>
+        <p className="mt-2 text-sm text-slate-300">Comparison settings: managed by the backend prototype.</p>
         <p className="mt-2 text-sm text-slate-300">Methodology: {explanation}</p>
       </div>
     </div>

@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bioheat-tracker-backend"
+version = "0.1.0"
+description = "Phase 1 API and processing engine for the Multimodal Bioheat Tracker"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110,<1",
+  "numpy>=1.26,<3",
+  "pillow>=10,<12",
+  "pydantic>=2.6,<3",
+  "python-multipart>=0.0.9,<1",
+  "uvicorn[standard]>=0.29,<1",
+]
+
+[project.optional-dependencies]
+test = [
+  "httpx>=0.27,<1",
+  "pytest>=8,<9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
