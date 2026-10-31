@@ -21,7 +21,8 @@ def _thermal_image(ingestion: IngestionResult) -> Image.Image:
         blue = 255 - normalized
         return Image.fromarray(np.dstack((red, green, blue)))
 
-    with Image.open(io.BytesIO(ingestion.thermal_bytes)) as image:
+    thermal_bytes = ingestion.thermal_display_bytes or ingestion.thermal_bytes
+    with Image.open(io.BytesIO(thermal_bytes)) as image:
         return image.convert("RGB")
 
 
@@ -29,7 +30,7 @@ def create_overlay_data_url(ingestion: IngestionResult) -> str:
     with Image.open(io.BytesIO(ingestion.rgb_bytes)) as image:
         rgb = image.convert("RGBA")
     thermal = _thermal_image(ingestion).resize(rgb.size, Image.Resampling.BILINEAR).convert("RGBA")
-    thermal.putalpha(105)
+    thermal.putalpha(150)
     overlay = Image.alpha_composite(rgb, thermal)
     output = io.BytesIO()
     overlay.save(output, format="PNG")

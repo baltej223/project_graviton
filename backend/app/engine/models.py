@@ -39,6 +39,7 @@ class IngestionResult:
     rgb_bytes: bytes
     thermal_bytes: bytes
     warnings: list[str]
+    thermal_display_bytes: bytes | None = None
 
 
 @dataclass(frozen=True)

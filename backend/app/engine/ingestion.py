@@ -2,6 +2,7 @@ import csv
 import io
 from pathlib import PurePath
 
+import cv2
 import numpy as np
 from PIL import Image, UnidentifiedImageError
 
@@ -96,6 +97,27 @@ def _parse_thermal_csv(
     return metadata, matrix
 
 
+def _inferno_thermal_image(content: bytes) -> tuple[bytes, bool]:
+    """Return a PNG visualization, colorizing grayscale thermal inputs with Inferno."""
+    with Image.open(io.BytesIO(content)) as image:
+        rgb = np.asarray(image.convert("RGB"))
+        is_grayscale = image.mode in {"1", "L", "I", "F"} or bool(
+            np.array_equal(rgb[..., 0], rgb[..., 1]) and np.array_equal(rgb[..., 1], rgb[..., 2])
+        )
+        if not is_grayscale:
+            output = io.BytesIO()
+            image.convert("RGB").save(output, format="PNG")
+            return output.getvalue(), False
+
+        gray = np.asarray(image.convert("L"), dtype=np.uint8)
+
+    inferno_bgr = cv2.applyColorMap(gray, cv2.COLORMAP_INFERNO)
+    inferno_rgb = cv2.cvtColor(inferno_bgr, cv2.COLOR_BGR2RGB)
+    output = io.BytesIO()
+    Image.fromarray(inferno_rgb).save(output, format="PNG")
+    return output.getvalue(), True
+
+
 def ingest_uploads(
     *,
     rgb_filename: str,
@@ -121,6 +143,7 @@ def ingest_uploads(
             thermal_unit,
         )
         warnings: list[str] = []
+        thermal_display_bytes = None
     elif thermal_extension in SUPPORTED_IMAGE_EXTENSIONS:
         thermal_image = _validate_image(
             thermal_filename,
@@ -138,9 +161,12 @@ def ingest_uploads(
             calibration_status=thermal_image.calibration_status or "unverified",
         )
         thermal_matrix = None
+        thermal_display_bytes, was_grayscale = _inferno_thermal_image(thermal_bytes)
         warnings = [
             "Thermal image calibration is unverified; ordinary image pixels are not treated as Celsius."
         ]
+        if was_grayscale:
+            warnings.append("Grayscale thermal image was colorized with the Inferno palette for display.")
     else:
         raise UnsupportedFormatError("thermal input must be CSV, JPEG, or PNG", thermal_filename)
 
@@ -151,4 +177,5 @@ def ingest_uploads(
         rgb_bytes=rgb_bytes,
         thermal_bytes=thermal_bytes,
         warnings=warnings,
+        thermal_display_bytes=thermal_display_bytes,
     )
