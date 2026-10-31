@@ -134,7 +134,7 @@ Response: Here is a pragmatic, MVP-focused execution plan to build this software
 
 > * **Backend & Processing:** Python.  
 > * **Vision Libraries:** OpenCV for feature extraction and alignment; NumPy and SciPy for mathematical modeling, matrix operations, and contour mapping.  
-> * **Frontend UI:** Streamlit or Gradio. This avoids the overhead of building a complex web architecture and allows you to present a clean, functional dashboard immediately.  
+> * **Frontend UI:** React. The frontend provides a clean, functional dashboard while the Python processing pipeline remains independently testable and reusable.  
 > * **Data Handling:** Standard image libraries to process JPEGs for optical data and CSVs/radiometric JPEGs for thermal arrays.
 
 **2\. Step-by-Step Implementation Pipeline**
@@ -188,7 +188,7 @@ To make the MVP an undeniable hackathon winner, you can build a few more softwar
 
 ### **Response: System Architecture Overview**
 
-This finalized pipeline is structured as a lightweight, CPU-bound application using Python (OpenCV, SciPy) and a Streamlit frontend. It relies strictly on mathematical morphology, physical equations, and adaptive logic branching rather than heavy machine learning models.
+This finalized pipeline is structured as a lightweight, CPU-bound application using Python (OpenCV, SciPy) and a React frontend. It relies strictly on mathematical morphology, physical equations, and adaptive logic branching rather than heavy machine learning models.
 
 ### **Phase 1: Data Ingestion & Pre-Processing**
 
@@ -224,11 +224,10 @@ The software uses a branching logic path based on the anatomical structure being
 
 ### **Phase 5: UI Dashboard & Automated EHR Export**
 
-> * **Visual Overlay:** The Streamlit interface displays the raw optical image with a semi-transparent, color-coded heat map overlaid exclusively on the flagged problem areas (leaving healthy areas clean and visible).  
+> * **Visual Overlay:** The React interface displays the raw optical image with a semi-transparent, color-coded heat map overlaid exclusively on the flagged problem areas (leaving healthy areas clean and visible).  
 > * **Data Readout:** A side panel displays the hard metrics: Maximum Temperature, Peak Δ*T*, and Depth Classification.  
 > * **One-Click Clinical Report:** A function utilizes a PDF generator (like FPDF or ReportLab) to automatically compile the patient's visual overlays, mathematical metrics, and timestamp into a formatted, printable PDF. This ensures the output is immediately ready to be attached to any hospital's Electronic Health Record (EHR) system.
 
 If you are building your presentation slides, this 5-phase structure translates perfectly into a clean, linear flowchart block diagram. You can use standard directional arrows connecting Phase 1 to Phase 5, using a split path at Phase 3 to show the system's smart adaptability for different body parts.
 
 ---
-
