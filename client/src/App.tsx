@@ -133,8 +133,8 @@ const buildResultFromApi = (
   const bilateralBlended = response.artifacts.find((artifact) => artifact.name === 'bilateral_blended_overlay');
   const bodyRegion =
     Object.entries(bodyRegionToApi).find(([, value]) => value === response.configuration.body_region)?.[0] as
-      | BodyRegion
-      | undefined;
+    | BodyRegion
+    | undefined;
   return {
     strategyLabel: getStrategyLabel(response.configuration.strategy),
     regionLabel: getRegionLabel(bodyRegion ?? config.bodyRegion),
@@ -358,9 +358,9 @@ function App() {
         body_region: bodyRegionToApi[config.bodyRegion],
         ...(config.strategy === 'normative'
           ? {
-              baseline_min_celsius: config.baselineMin,
-              baseline_max_celsius: config.baselineMax,
-            }
+            baseline_min_celsius: config.baselineMin,
+            baseline_max_celsius: config.baselineMax,
+          }
           : { delta_t_threshold_celsius: config.deltaT }),
         blend_intensity: blendIntensity,
       });
@@ -603,22 +603,20 @@ function WorkflowSteps({
         return (
           <div
             key={step.number}
-            className={`flex items-center gap-3 rounded-2xl border px-4 py-3 ${
-              active
-                ? 'border-cyan-400/40 bg-cyan-500/10'
-                : step.complete
-                  ? 'border-emerald-500/30 bg-emerald-500/5'
-                  : 'border-slate-800 bg-slate-900/40'
-            }`}
+            className={`flex items-center gap-3 rounded-2xl border px-4 py-3 ${active
+              ? 'border-cyan-400/40 bg-cyan-500/10'
+              : step.complete
+                ? 'border-emerald-500/30 bg-emerald-500/5'
+                : 'border-slate-800 bg-slate-900/40'
+              }`}
           >
             <span
-              className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl text-xs font-semibold ${
-                active
-                  ? 'bg-cyan-400 text-slate-950'
-                  : step.complete
-                    ? 'bg-emerald-400/15 text-emerald-200'
-                    : 'bg-slate-800 text-slate-400'
-              }`}
+              className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl text-xs font-semibold ${active
+                ? 'bg-cyan-400 text-slate-950'
+                : step.complete
+                  ? 'bg-emerald-400/15 text-emerald-200'
+                  : 'bg-slate-800 text-slate-400'
+                }`}
             >
               {step.complete ? '✓' : step.number}
             </span>
@@ -717,12 +715,11 @@ function UploadCard({
                     <span
                       key={index}
                       className={
-                        `h-3 rounded-sm ${
-                          index % 5 === 0 || index % 7 === 0
-                            ? 'bg-cyan-400/80'
-                            : index % 3 === 0
-                              ? 'bg-blue-500/70'
-                              : 'bg-slate-700'
+                        `h-3 rounded-sm ${index % 5 === 0 || index % 7 === 0
+                          ? 'bg-cyan-400/80'
+                          : index % 3 === 0
+                            ? 'bg-blue-500/70'
+                            : 'bg-slate-700'
                         }`
                       }
                     />
@@ -858,9 +855,8 @@ function AnalyzeButton({
       {processingState.status !== 'idle' ? (
         <div role="status" aria-live="polite" className="mt-4 flex items-center gap-3 rounded-xl border border-slate-700 bg-slate-950/60 px-3 py-2 text-sm text-slate-300">
           <span
-            className={`inline-block h-2.5 w-2.5 rounded-full ${
-              processingState.status === 'complete' ? 'bg-emerald-400' : 'bg-cyan-400 animate-pulse'
-            }`}
+            className={`inline-block h-2.5 w-2.5 rounded-full ${processingState.status === 'complete' ? 'bg-emerald-400' : 'bg-cyan-400 animate-pulse'
+              }`}
           />
           {processingState.message}
         </div>
@@ -906,11 +902,10 @@ function AnalysisViewer({
             type="button"
             onClick={() => onLayerSelect(layer.id)}
             aria-pressed={selectedLayer === layer.id}
-            className={`shrink-0 rounded-full border px-3 py-2 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-cyan-400 ${
-              selectedLayer === layer.id
-                ? 'border-cyan-400 bg-cyan-500/15 text-cyan-100'
-                : 'border-slate-600 bg-slate-900 text-slate-300 hover:border-slate-500'
-            }`}
+            className={`shrink-0 rounded-full border px-3 py-2 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-cyan-400 ${selectedLayer === layer.id
+              ? 'border-cyan-400 bg-cyan-500/15 text-cyan-100'
+              : 'border-slate-600 bg-slate-900 text-slate-300 hover:border-slate-500'
+              }`}
           >
             {layer.label}
           </button>
@@ -960,14 +955,14 @@ function AnalysisViewer({
               Demo view
             </span>
           </div>
-
-          <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-white/10 bg-slate-950/75 px-2.5 py-1.5 text-[10px] text-slate-300">
-            {selectedLayer === 'final' && overlayDataUrl
-              ? 'Backend-generated basic overlay · no epicenter or anomaly calculation yet'
-              : isThermalLayer && thermalPreview
-                ? 'Original thermal image'
-                : 'Illustrative alignment · not a clinical measurement'}
-          </div>
+          {/**/}
+          {/* <div className="pointer-events-none absolute bottom-3 left-3 rounded-lg border border-white/10 bg-slate-950/75 px-2.5 py-1.5 text-[10px] text-slate-300"> */}
+          {/*   {selectedLayer === 'final' && overlayDataUrl */}
+          {/*     ? 'Backend-generated basic overlay · no epicenter or anomaly calculation yet' */}
+          {/*     : isThermalLayer && thermalPreview */}
+          {/*       ? 'Original thermal image' */}
+          {/*       : 'Illustrative alignment · not a clinical measurement'} */}
+          {/* </div> */}
         </div>
       </div>
 
