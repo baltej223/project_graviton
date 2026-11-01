@@ -568,12 +568,6 @@ function Header() {
           </p>
         </div>
 
-        <div className="flex shrink-0 flex-col items-start gap-3 sm:items-end">
-          <span className="inline-flex items-center rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1.5 text-sm font-medium text-sky-200">
-            Prototype / Phase 1
-          </span>
-          <span className="text-xs text-slate-400">Local-only demo · No patient data is uploaded</span>
-        </div>
       </div>
     </header>
   );
